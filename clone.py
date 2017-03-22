@@ -94,6 +94,7 @@ def generate_data(samples, root_dir, batch_size=32):
     output_shape = (160, 320, 3)
     angle_adj = 0.1
 
+    steering_idx = 4
     center_image_idx = 1
     left_image_idx = 2
     right_image_idx = 3
@@ -104,7 +105,7 @@ def generate_data(samples, root_dir, batch_size=32):
     def gen_data(batch_samples, filename_idx, angle_adj):
         for idx, row in enumerate(batch_samples.itertuples()):
             images[idx] = skimage.io.imread(get_filename(row[filename_idx]))
-            angles[idx] = row.steering + angle_adj
+            angles[idx] = row[steering_idx] + angle_adj
 
         yield sklearn.utils.shuffle(images, angles)
 
@@ -136,7 +137,7 @@ def preload_data(root_dir):
 
 
 def main():
-    root_dir = './data'
+    root_dir = './data2-3'
     batch_size = 32
     model_name = 'nvidia'
 
@@ -152,7 +153,7 @@ def main():
                 train_steps_per_epoch=len(train)/batch_size,
                 validation_steps_per_epoch=len(validation)/batch_size,
                 initial_epoch=0,
-                epochs=10,
+                epochs=50,
                 tf_logs_dir='./logs',
                 checkpoints_dir='./',
                 name=model_name)
