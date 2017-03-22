@@ -15,7 +15,7 @@ from sklearn.model_selection import train_test_split
 import sklearn.utils
 
 
-def create_model():
+def create_model_lenet():
     model = Sequential()
     model.add(Cropping2D(cropping=((50,20), (0,0)), input_shape=(160,320,3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
@@ -29,6 +29,28 @@ def create_model():
     return model
 
 
+def create_model_nvidia():
+    model = Sequential()
+    model.add(Cropping2D(cropping=((50,20), (0,0)), input_shape=(160,320,3)))
+    model.add(Lambda(lambda x: x / 255.0 - 0.5))
+    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Flatten())
+    model.add(Dense(100))
+    model.add(Dense(50))
+    model.add(Dense(10))
+    model.add(Dense(1))
+    return model
+
+
+def create_model(name):
+    models = {'lenet': create_model_lenet, 'nvidia': create_model_nvidia}
+    return models[name]()
+
+
 def train_model(model,
                 train_generator,
                 validation_generator,
@@ -37,14 +59,15 @@ def train_model(model,
                 initial_epoch,
                 epochs,
                 tf_logs_dir,
-                checkpoints_dir):
+                checkpoints_dir,
+                name):
     tensorboard_callback = TensorBoard(log_dir=tf_logs_dir, histogram_freq=0,
                                        write_graph=True, write_images=False)
 
     filepath = os.path.join(checkpoints_dir,
-                            'model-improvement-{epoch:02d}-{val_loss:.2f}.h5')
+                            'model-' + name + '-improvement-{epoch:02d}-{val_loss:.3f}.h5')
     checkpoint_callback = ModelCheckpoint(filepath, monitor='val_loss',
-                                          verbose=1, save_weights_only=False,
+                                          verbose=0, save_weights_only=False,
                                           save_best_only=True, mode='max')
 
     model.compile(loss='mse', optimizer='adam')
@@ -115,12 +138,13 @@ def preload_data(root_dir):
 def main():
     root_dir = './data'
     batch_size = 32
+    model_name = 'nvidia'
 
     train, validation = preload_data(root_dir)
     train_generator = flip_images(generate_data(train, root_dir, batch_size=batch_size))
     validation_generator = flip_images(generate_data(validation, root_dir, batch_size=batch_size))
 
-    model = create_model()
+    model = create_model(model_name)
 
     train_model(model,
                 train_generator,
@@ -130,9 +154,10 @@ def main():
                 initial_epoch=0,
                 epochs=10,
                 tf_logs_dir='./logs',
-                checkpoints_dir='./')
+                checkpoints_dir='./',
+                name=model_name)
 
-    model.save('model.h5')
+    model.save('model-{}.h5'.format(model_name))
 
 
 if __name__ == '__main__':
