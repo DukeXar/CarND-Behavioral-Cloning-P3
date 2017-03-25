@@ -12,6 +12,7 @@ import pandas as pd
 import skimage.io
 import sklearn
 import sklearn.utils
+import keras.regularizers
 
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard
@@ -37,6 +38,12 @@ def create_model_lenet(parameters):
 
 def create_model_nvidia(parameters):
     dropout = parameters.get('dropout', 0)
+    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
+
+    if l2_regularizer_lambda:
+        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
+    else:
+        l2_regularizer = None
 
     model = Sequential()
     model.add(Cropping2D(cropping=((50, 20), (0, 0)), input_shape=(160, 320, 3)))
@@ -47,18 +54,19 @@ def create_model_nvidia(parameters):
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Flatten())
+
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(100))
+    model.add(Dense(100, kernel_regularizer=l2_regularizer))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(50))
+    model.add(Dense(50, kernel_regularizer=l2_regularizer))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(10))
+    model.add(Dense(10, kernel_regularizer=l2_regularizer))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(1))
+    model.add(Dense(1, kernel_regularizer=l2_regularizer))
     return model
 
 
@@ -87,6 +95,7 @@ def train_model(model,
                 name):
     optimizer = 'adam'
     loss_function = 'mse'
+    assert initial_epoch == 0, 'Not implemented'
 
     logging.info(('Training model {}: epochs={}, initial_epoch={}, train_steps_per_epoch={}, '
                   'validation_steps_per_epoch={}, loss={}, optimizer={}').format(name, epochs, initial_epoch,
@@ -190,6 +199,7 @@ def main():
     parser.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
     parser.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
     parser.add_argument('--model-dropout', type=float, default=0.0)
+    parser.add_argument('--model-l2-regularizer', type=float, default=0.0)
     #parser.add_argument('--model-enable-histogram', type=bool, default=False)
 
     args = parser.parse_args()
@@ -228,7 +238,9 @@ def main():
 
     model_parameters = {}
     if args.model_dropout:
-        model_parameters['model_dropout'] = args.model_dropout
+        model_parameters['dropout'] = args.model_dropout
+    if args.model_l2_regularizer:
+        model_parameters['l2_regularizer'] = args.model_l2_regularizer
     #if args.model_enable_histogram:
     #    model_parameters['enable_histogram'] = True
 
