@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import logging
 import os
 import random
+import sys
 from datetime import datetime
 
 import numpy as np
@@ -10,15 +12,16 @@ import pandas as pd
 import skimage.io
 import sklearn
 import sklearn.utils
+
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
-from keras.layers import Flatten, Dense, Lambda
+from keras.layers import Flatten, Dense, Lambda, Dropout
 from keras.models import Sequential
 from sklearn.model_selection import train_test_split
 
 
-def create_model_lenet():
+def create_model_lenet(parameters):
     model = Sequential()
     model.add(Cropping2D(cropping=((50, 20), (0, 0)), input_shape=(160, 320, 3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
@@ -32,7 +35,9 @@ def create_model_lenet():
     return model
 
 
-def create_model_nvidia():
+def create_model_nvidia(parameters):
+    dropout = parameters.get('dropout', 0)
+
     model = Sequential()
     model.add(Cropping2D(cropping=((50, 20), (0, 0)), input_shape=(160, 320, 3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
@@ -42,9 +47,17 @@ def create_model_nvidia():
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Flatten())
+    if dropout:
+        model.add(Dropout(rate=dropout))
     model.add(Dense(100))
+    if dropout:
+        model.add(Dropout(rate=dropout))
     model.add(Dense(50))
+    if dropout:
+        model.add(Dropout(rate=dropout))
     model.add(Dense(10))
+    if dropout:
+        model.add(Dropout(rate=dropout))
     model.add(Dense(1))
     return model
 
@@ -57,8 +70,9 @@ MODELS = {
 DEFAULT_MODEL = 'nvidia'
 
 
-def create_model(name):
-    return MODELS[name]()
+def create_model(name, parameters):
+    logging.info('Creating model %s, parameters=%s', name, parameters)
+    return MODELS[name](parameters)
 
 
 def train_model(model,
@@ -71,6 +85,15 @@ def train_model(model,
                 tf_logs_dir,
                 checkpoints_dir,
                 name):
+    optimizer = 'adam'
+    loss_function = 'mse'
+
+    logging.info(('Training model {}: epochs={}, initial_epoch={}, train_steps_per_epoch={}, '
+                  'validation_steps_per_epoch={}, loss={}, optimizer={}').format(name, epochs, initial_epoch,
+                                                                                 train_steps_per_epoch,
+                                                                                 validation_steps_per_epoch,
+                                                                                 loss_function, optimizer))
+
     tensorboard_callback = TensorBoard(log_dir=tf_logs_dir, histogram_freq=1,
                                        write_graph=True, write_images=True)
 
@@ -81,7 +104,7 @@ def train_model(model,
                                           verbose=0, save_weights_only=False,
                                           save_best_only=True)
 
-    model.compile(loss='mse', optimizer='adam')
+    model.compile(loss=loss_function, optimizer=optimizer)
     model.fit_generator(train_generator,
                         steps_per_epoch=train_steps_per_epoch,
                         epochs=epochs,
@@ -98,7 +121,7 @@ class Indices(object):
     steering = 3
 
 
-def generate_data(samples, batch_size=32, angle_adj=0.1, augment=True):
+def generate_data(samples, batch_size=32, angle_adj=0.1):
     output_shape = (160, 320, 3)
 
     images = np.empty((batch_size,) + output_shape, np.float32)
@@ -107,7 +130,7 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, augment=True):
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
         for idx, row in enumerate(a_batch_samples.itertuples()):
             images[idx] = skimage.io.imread(row[filename_idx])
-            angles[idx] = row[Indices.steering+1] + an_angle_adj
+            angles[idx] = row[Indices.steering + 1] + an_angle_adj
 
         yield sklearn.utils.shuffle(images, angles)
 
@@ -116,11 +139,11 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, augment=True):
 
         for offset in range(0, len(samples), batch_size):
             batch_samples = samples[offset:offset + batch_size]
-            yield from gen_data(batch_samples, Indices.center_image+1, 0)
+            yield from gen_data(batch_samples, Indices.center_image + 1, 0)
 
-            if augment:
-                yield from gen_data(batch_samples, Indices.left_image+1, angle_adj)
-                yield from gen_data(batch_samples, Indices.right_image+1, -angle_adj)
+            if angle_adj is not None:
+                yield from gen_data(batch_samples, Indices.left_image + 1, angle_adj)
+                yield from gen_data(batch_samples, Indices.right_image + 1, -angle_adj)
 
 
 def flip_images(batch_generator, flip_prob=0.5):
@@ -164,19 +187,52 @@ def main():
     parser.add_argument('--name', type=str, default='noname', help='Model name')
     parser.add_argument('--dest', type=str, default=os.path.join('out', datetime.now().isoformat()),
                         help='Destination directory')
-    parser.add_argument('--angleadj', type=float, default=0.1, help='Angle adjustment for left-right images')
+    parser.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
     parser.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
+    parser.add_argument('--model-dropout', type=float, default=0.0)
+    #parser.add_argument('--model-enable-histogram', type=bool, default=False)
 
     args = parser.parse_args()
 
+    logging_filename = os.path.join(args.dest, 'clone.log')
+    os.makedirs(os.path.dirname(logging_filename), exist_ok=True)
+
+    logging.basicConfig(filename=logging_filename,
+                        level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
+
+    logging.critical('Starting cloning')
+    logging.critical('Started as: %s', ' '.join(sys.argv))
+    logging.critical('Data directories: %s', args.datadir)
+    logging.critical('Model: %s', args.model)
+    logging.critical('Batch size: %d', args.batchsize)
+    logging.critical('Epochs: %d', args.epochs)
+    logging.critical('Initial epoch: %d', args.initialepoch)
+    logging.critical('Angle adjustment: %s', args.angleadj)
+    logging.critical('Validation set size: %s', args.validsize)
+    logging.critical('Model name: %s', args.name)
+    logging.critical('Destination directory: %s', args.dest)
+
     batch_size = args.batchsize
 
+    logging.info('Loading data')
+
     train, validation = preload_data(args.datadir, valid_test_size=args.validsize)
+
+    logging.critical('Train set size: %d', len(train))
+    logging.critical('Validation set size: %d', len(validation))
+
     train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj))
     validation_generator = flip_images(
         generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj))
 
-    model = create_model(args.model)
+    model_parameters = {}
+    if args.model_dropout:
+        model_parameters['model_dropout'] = args.model_dropout
+    #if args.model_enable_histogram:
+    #    model_parameters['enable_histogram'] = True
+
+    model = create_model(args.model, model_parameters)
 
     model_dir = os.path.join(args.dest, 'model')
     os.makedirs(model_dir, exist_ok=True)
