@@ -7,19 +7,18 @@ import random
 import sys
 from datetime import datetime
 
+import keras.regularizers
 import numpy as np
-import pandas as pd
 import skimage.io
 import sklearn
 import sklearn.utils
-import keras.regularizers
-
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
 from keras.layers import Flatten, Dense, Lambda, Dropout
 from keras.models import Sequential
-from sklearn.model_selection import train_test_split
+
+import data
 
 
 def create_model_lenet(parameters):
@@ -123,23 +122,15 @@ def train_model(model,
                         callbacks=[tensorboard_callback, checkpoint_callback])
 
 
-class Indices(object):
-    center_image = 0
-    left_image = 1
-    right_image = 2
-    steering = 3
-
 
 def generate_data(samples, batch_size=32, angle_adj=0.1):
-    output_shape = (160, 320, 3)
-
-    images = np.empty((batch_size,) + output_shape, np.float32)
-    angles = np.empty((batch_size,), np.float32)
-
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
+        images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
+        angles = np.empty((len(a_batch_samples),), np.float32)
+
         for idx, row in enumerate(a_batch_samples.itertuples()):
             images[idx] = skimage.io.imread(row[filename_idx])
-            angles[idx] = row[Indices.steering + 1] + an_angle_adj
+            angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
 
         yield sklearn.utils.shuffle(images, angles)
 
@@ -148,11 +139,11 @@ def generate_data(samples, batch_size=32, angle_adj=0.1):
 
         for offset in range(0, len(samples), batch_size):
             batch_samples = samples[offset:offset + batch_size]
-            yield from gen_data(batch_samples, Indices.center_image + 1, 0)
+            yield from gen_data(batch_samples, data.Indices.center_image + 1, 0)
 
             if angle_adj is not None:
-                yield from gen_data(batch_samples, Indices.left_image + 1, angle_adj)
-                yield from gen_data(batch_samples, Indices.right_image + 1, -angle_adj)
+                yield from gen_data(batch_samples, data.Indices.left_image + 1, angle_adj)
+                yield from gen_data(batch_samples, data.Indices.right_image + 1, -angle_adj)
 
 
 def flip_images(batch_generator, flip_prob=0.5):
@@ -165,25 +156,6 @@ def flip_images(batch_generator, flip_prob=0.5):
             angles[idx] = -angles[idx]
         yield images, angles
 
-
-def update_filename_in_row(df, row_idx, col_idx, row, root_dir):
-    # Ugh, what's up with indexing in pandas, just want to modify a value in place, how difficult it can be
-    df.set_value(row_idx, col_idx, os.path.join(root_dir, 'IMG', os.path.basename(row[col_idx])))
-
-
-def preload_data(root_dirs, valid_test_size=0.2):
-    driving_logs = []
-    for root in root_dirs:
-        df = pd.read_csv(os.path.join(root, 'driving_log.csv'), header=None)
-        for idx, row in df.iterrows():
-            update_filename_in_row(df, idx, Indices.center_image, row, root)
-            update_filename_in_row(df, idx, Indices.left_image, row, root)
-            update_filename_in_row(df, idx, Indices.right_image, row, root)
-        driving_logs.append(df)
-    combined_log = pd.concat(driving_logs)
-
-    train, validation = train_test_split(combined_log, test_size=valid_test_size)
-    return train, validation
 
 
 def main():
@@ -227,7 +199,7 @@ def main():
 
     logging.info('Loading data')
 
-    train, validation = preload_data(args.datadir, valid_test_size=args.validsize)
+    train, validation = data.preload_data(args.datadir, valid_test_size=args.validsize)
 
     logging.critical('Train set size: %d', len(train))
     logging.critical('Validation set size: %d', len(validation))
