@@ -94,7 +94,6 @@ def train_model(model,
                 name):
     optimizer = 'adam'
     loss_function = 'mse'
-    assert initial_epoch == 0, 'Not implemented'
 
     logging.info(('Training model {}: epochs={}, initial_epoch={}, train_steps_per_epoch={}, '
                   'validation_steps_per_epoch={}, loss={}, optimizer={}').format(name, epochs, initial_epoch,
@@ -120,7 +119,6 @@ def train_model(model,
                         validation_data=validation_data,
                         validation_steps=validation_steps_per_epoch,
                         callbacks=[tensorboard_callback, checkpoint_callback])
-
 
 
 def generate_data(samples, batch_size=32, angle_adj=0.1):
@@ -157,24 +155,42 @@ def flip_images(batch_generator, flip_prob=0.5):
         yield images, angles
 
 
-
-def main():
+def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
-    parser.add_argument('--model', type=str, choices=MODELS.keys(), default=DEFAULT_MODEL, help='Model type')
-    parser.add_argument('--batchsize', type=int, default=32)
     parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--initialepoch', type=int, default=0)
     parser.add_argument('--name', type=str, default='noname', help='Model name')
     parser.add_argument('--dest', type=str, default=os.path.join('out', datetime.now().isoformat()),
                         help='Destination directory')
-    parser.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
-    parser.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
-    parser.add_argument('--model-dropout', type=float, default=0.0)
-    parser.add_argument('--model-l2-regularizer', type=float, default=0.0)
-    #parser.add_argument('--model-enable-histogram', type=bool, default=False)
+
+    subparsers = parser.add_subparsers(dest='mode', help='Select one of the modes')
+
+    new_model_parser = subparsers.add_parser('new', help='Start training new model',
+                                             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    new_model_parser.add_argument('--model', type=str, choices=MODELS.keys(), default=DEFAULT_MODEL, help='Model type')
+    new_model_parser.add_argument('--model-dropout', type=float, default=0.0,
+                                  help='Dropout (0.0 to disable, 1.0 - drop everything)')
+    new_model_parser.add_argument('--model-l2-regularizer', type=float, default=0.0,
+                                  help='L2 weights regularizer for FC layers')
+
+    cont_model_parser = subparsers.add_parser('continue', help='Continue training exiting model',
+                                              formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    cont_model_parser.add_argument('--model-file', type=str, required=True,
+                                   help='Filename with model in .h5 keras format')
+    cont_model_parser.add_argument('--initialepoch', type=int, default=0, help='Epoch to start counting from')
+
+    data_group = parser.add_argument_group('data_parameters', 'Input data processing parameters')
+    data_group.add_argument('--batchsize', type=int, default=32)
+    data_group.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
+    data_group.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
+
+    parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
 
     args = parser.parse_args()
+    return args
+
+
+def main():
+    args = parse_arguments()
 
     logging_filename = os.path.join(args.dest, 'clone.log')
     os.makedirs(os.path.dirname(logging_filename), exist_ok=True)
@@ -186,16 +202,33 @@ def main():
     logging.critical('Starting cloning')
     logging.critical('Started as: %s', ' '.join(sys.argv))
     logging.critical('Data directories: %s', args.datadir)
-    logging.critical('Model: %s', args.model)
     logging.critical('Batch size: %d', args.batchsize)
     logging.critical('Epochs: %d', args.epochs)
-    logging.critical('Initial epoch: %d', args.initialepoch)
     logging.critical('Angle adjustment: %s', args.angleadj)
     logging.critical('Validation set size: %s', args.validsize)
     logging.critical('Model name: %s', args.name)
     logging.critical('Destination directory: %s', args.dest)
 
-    batch_size = args.batchsize
+    if args.mode == 'new':
+        logging.critical('Model: %s', args.model)
+
+        model_parameters = {}
+        if args.model_dropout:
+            model_parameters['dropout'] = args.model_dropout
+        if args.model_l2_regularizer:
+            model_parameters['l2_regularizer'] = args.model_l2_regularizer
+
+        model = create_model(args.model, model_parameters)
+        initial_epoch = 0
+
+    elif args.mode == 'continue':
+        logging.critical('Model file: %s', args.model_file)
+        logging.critical('Initial epoch: %d', args.initialepoch)
+        model = keras.models.load_model(args.model_file)
+        initial_epoch = args.initialepoch
+
+    else:
+        assert False, 'Unsupported mode {}'.format(args.mode)
 
     logging.info('Loading data')
 
@@ -204,19 +237,10 @@ def main():
     logging.critical('Train set size: %d', len(train))
     logging.critical('Validation set size: %d', len(validation))
 
+    batch_size = args.batchsize
     train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj))
     validation_generator = flip_images(
         generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj))
-
-    model_parameters = {}
-    if args.model_dropout:
-        model_parameters['dropout'] = args.model_dropout
-    if args.model_l2_regularizer:
-        model_parameters['l2_regularizer'] = args.model_l2_regularizer
-    #if args.model_enable_histogram:
-    #    model_parameters['enable_histogram'] = True
-
-    model = create_model(args.model, model_parameters)
 
     model_dir = os.path.join(args.dest, 'model')
     os.makedirs(model_dir, exist_ok=True)
@@ -228,7 +252,7 @@ def main():
                 validation_data=validation_generator,
                 train_steps_per_epoch=len(train) / batch_size,
                 validation_steps_per_epoch=len(validation) / batch_size,
-                initial_epoch=args.initialepoch,
+                initial_epoch=initial_epoch,
                 epochs=args.epochs,
                 tf_logs_dir=tf_logs_dir,
                 checkpoints_dir=model_dir,
