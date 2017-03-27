@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import sys
+import socket
 from datetime import datetime
 
 import keras.regularizers
@@ -159,8 +160,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--name', type=str, default='noname', help='Model name')
-    parser.add_argument('--dest', type=str, default=os.path.join('out', datetime.now().isoformat()),
-                        help='Destination directory')
+    default_out_dir = os.path.join('out', datetime.now().isoformat() + '.' + socket.getfqdn())
+    parser.add_argument('--dest', type=str, default=default_out_dir, help='Destination directory')
 
     subparsers = parser.add_subparsers(dest='mode', help='Select one of the modes')
 
@@ -183,7 +184,8 @@ def parse_arguments():
     data_group.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
     data_group.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
 
-    parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
+    new_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
+    cont_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
 
     args = parser.parse_args()
     return args
