@@ -16,7 +16,9 @@ OUTPUT_SHAPE = (160, 320, 3)
 
 def update_filename_in_row(df, row_idx, col_idx, row, root_dir):
     # Ugh, what's up with indexing in pandas, just want to modify a value in place, how difficult it can be
-    df.set_value(row_idx, col_idx, os.path.join(root_dir, 'IMG', os.path.basename(row[col_idx])))
+    new_path = os.path.join(root_dir, 'IMG', os.path.basename(row[col_idx]))
+    df.set_value(row_idx, col_idx, new_path)
+    return new_path
 
 
 def preload_data(root_dirs, valid_test_size=0.2):
@@ -26,8 +28,8 @@ def preload_data(root_dirs, valid_test_size=0.2):
         df.columns = ['center', 'left', 'right', 'steering', 'throttle', 'brake', 'speed']
         to_remove = []
         for idx, row in df.iterrows():
-            update_filename_in_row(df, idx, 'center', row, root)
-            if not os.path.exists(row['center']):
+            new_path = update_filename_in_row(df, idx, 'center', row, root)
+            if not os.path.exists(new_path):
                 to_remove.append(idx)
                 continue
             update_filename_in_row(df, idx, 'left', row, root)
