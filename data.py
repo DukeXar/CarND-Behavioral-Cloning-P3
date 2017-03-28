@@ -24,10 +24,15 @@ def preload_data(root_dirs, valid_test_size=0.2):
     for root in root_dirs:
         df = pd.read_csv(os.path.join(root, 'driving_log.csv'), header=None)
         df.columns = ['center', 'left', 'right', 'steering', 'throttle', 'brake', 'speed']
+        to_remove = []
         for idx, row in df.iterrows():
             update_filename_in_row(df, idx, 'center', row, root)
+            if not os.path.exists(row['center']):
+                to_remove.append(idx)
+                continue
             update_filename_in_row(df, idx, 'left', row, root)
             update_filename_in_row(df, idx, 'right', row, root)
+        df.drop(to_remove, inplace=True)
         driving_logs.append(df)
     combined_log = pd.concat(driving_logs)
 
