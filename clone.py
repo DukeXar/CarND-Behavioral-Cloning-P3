@@ -13,7 +13,7 @@ import numpy as np
 import skimage.io
 import sklearn
 import sklearn.utils
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
 from keras.layers import Flatten, Dense, Lambda, Dropout
@@ -92,8 +92,10 @@ def train_model(model,
                 epochs,
                 tf_logs_dir,
                 checkpoints_dir,
-                name):
-    optimizer = 'adam'
+                name,
+                learning_rate):
+
+    optimizer = keras.optimizers.Adam(lr=learning_rate)
     loss_function = 'mse'
 
     logging.info(('Training model {}: epochs={}, initial_epoch={}, train_steps_per_epoch={}, '
@@ -112,6 +114,8 @@ def train_model(model,
                                           verbose=0, save_weights_only=False,
                                           save_best_only=True)
 
+    early_stopping_callback = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=10, verbose=1)
+
     model.compile(loss=loss_function, optimizer=optimizer)
     model.fit_generator(train_generator,
                         steps_per_epoch=train_steps_per_epoch,
@@ -119,7 +123,7 @@ def train_model(model,
                         initial_epoch=initial_epoch,
                         validation_data=validation_data,
                         validation_steps=validation_steps_per_epoch,
-                        callbacks=[tensorboard_callback, checkpoint_callback])
+                        callbacks=[tensorboard_callback, checkpoint_callback, early_stopping_callback])
 
 
 def generate_data(samples, batch_size=32, angle_adj=0.1):
@@ -158,7 +162,8 @@ def flip_images(batch_generator, flip_prob=0.5):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to learn')
+    parser.add_argument('--learning-rate', type=float, default=0.0001, help='Learning rate')
     parser.add_argument('--name', type=str, default='noname', help='Model name')
     default_out_dir = os.path.join('out', datetime.now().isoformat() + '.' + socket.getfqdn())
     parser.add_argument('--dest', type=str, default=default_out_dir, help='Destination directory')
@@ -205,6 +210,7 @@ def main():
     logging.critical('Started as: %s', ' '.join(sys.argv))
     logging.critical('Data directories: %s', args.datadir)
     logging.critical('Batch size: %d', args.batchsize)
+    logging.critical('Learning rate: %s', args.learning_rate)
     logging.critical('Epochs: %d', args.epochs)
     logging.critical('Angle adjustment: %s', args.angleadj)
     logging.critical('Validation set size: %s', args.validsize)
@@ -258,7 +264,8 @@ def main():
                 epochs=args.epochs,
                 tf_logs_dir=tf_logs_dir,
                 checkpoints_dir=model_dir,
-                name=args.name)
+                name=args.name,
+                learning_rate=args.learning_rate)
 
     model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 
