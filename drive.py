@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import argparse
 import base64
 from datetime import datetime
@@ -16,9 +18,13 @@ from keras.models import load_model
 import h5py
 from keras import __version__ as keras_version
 
+from data import preprocess_hist, preprocess_yuv
+
 sio = socketio.Server()
 app = Flask(__name__)
 model = None
+enable_preprocess_hist = False
+enable_preprocess_yuv = False
 prev_image_array = None
 
 
@@ -61,6 +67,12 @@ def telemetry(sid, data):
         imgString = data["image"]
         image = Image.open(BytesIO(base64.b64decode(imgString)))
         image_array = np.asarray(image)
+
+        if enable_preprocess_hist:
+            image_array = preprocess_hist(image_array)
+        elif enable_preprocess_yuv:
+            image_array = preprocess_yuv(image_array)
+
         steering_angle = float(model.predict(image_array[None, :, :, :], batch_size=1))
 
         throttle = controller.update(float(speed))
@@ -108,7 +120,16 @@ if __name__ == '__main__':
         default='',
         help='Path to image folder. This is where the images from the run will be saved.'
     )
+    parser.add_argument('--preprocess-hist',
+                        action='store_true',
+                        help='Enable yuv conversion and histogram equalization')
+    parser.add_argument('--preprocess-yuv',
+                        action='store_true',
+                        help='Enable yuv conversion')
     args = parser.parse_args()
+
+    enable_preprocess_hist = args.preprocess_hist
+    enable_preprocess_yuv = args.preprocess_yuv
 
     # check that model Keras version is same as local Keras version
     f = h5py.File(args.model, mode='r')

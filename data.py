@@ -1,5 +1,6 @@
 import os
 
+import cv2
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -40,3 +41,18 @@ def preload_data(root_dirs, valid_test_size=0.2):
 
     train, validation = train_test_split(combined_log, test_size=valid_test_size)
     return train, validation
+
+
+def preprocess_hist(x):
+    yuv = cv2.cvtColor(x, cv2.COLOR_RGB2YUV)
+    # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=3.0)
+    cl1 = clahe.apply(yuv[:, :, 0])
+    yuv[:, :, 0] = cl1
+    # yuv = yuv[trim_top:yuv.shape[0]-trim_bottom, 0:yuv.shape[1], :]
+    return yuv
+
+
+def preprocess_yuv(x):
+    yuv = cv2.cvtColor(x, cv2.COLOR_RGB2YUV)
+    return yuv

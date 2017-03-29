@@ -13,6 +13,7 @@ import numpy as np
 import skimage.io
 import sklearn
 import sklearn.utils
+import cv2
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
@@ -116,7 +117,12 @@ def train_model(model,
 
     early_stopping_callback = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=10, verbose=1)
 
-    model.compile(loss=loss_function, optimizer=optimizer)
+    import keras.backend as K
+    import keras.metrics as M
+    def rmse(y_true, y_pred):
+        return K.sqrt(M.mean_squared_error(y_true, y_pred))
+
+    model.compile(loss=loss_function, optimizer=optimizer, metrics=[rmse])
     model.fit_generator(train_generator,
                         steps_per_epoch=train_steps_per_epoch,
                         epochs=epochs,
@@ -126,13 +132,19 @@ def train_model(model,
                         callbacks=[tensorboard_callback, checkpoint_callback, early_stopping_callback])
 
 
-def generate_data(samples, batch_size=32, angle_adj=0.1):
+def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False):
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
 
         for idx, row in enumerate(a_batch_samples.itertuples()):
-            images[idx] = skimage.io.imread(row[filename_idx])
+            image = skimage.io.imread(row[filename_idx])
+            if enable_preprocess_hist:
+                images[idx] = data.preprocess_hist(image)
+            elif enable_preprocess_yuv:
+                images[idx] = data.preprocess_yuv(image)
+            else:
+                images[idx] = image
             angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
 
         yield sklearn.utils.shuffle(images, angles)
@@ -188,6 +200,9 @@ def parse_arguments():
     data_group.add_argument('--batchsize', type=int, default=32)
     data_group.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
     data_group.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
+    data_group.add_argument('--preprocess-hist', action='store_true',
+                            help='Enable yuv conversion and histogram equalization')
+    data_group.add_argument('--preprocess-yuv', action='store_true', help='Enable yuv conversion')
 
     new_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
     cont_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
@@ -213,6 +228,8 @@ def main():
     logging.critical('Learning rate: %s', args.learning_rate)
     logging.critical('Epochs: %d', args.epochs)
     logging.critical('Angle adjustment: %s', args.angleadj)
+    logging.critical('Histogram equalization and YUV: %s', args.preprocess_hist)
+    logging.critical('YUV preprocessing: %s', args.preprocess_yuv)
     logging.critical('Validation set size: %s', args.validsize)
     logging.critical('Model name: %s', args.name)
     logging.critical('Destination directory: %s', args.dest)
@@ -246,9 +263,12 @@ def main():
     logging.critical('Validation set size: %d', len(validation))
 
     batch_size = args.batchsize
-    train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj))
+    train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
+                                                enable_preprocess_hist=args.preprocess_hist,
+                                                enable_preprocess_yuv=args.preprocess_yuv))
     validation_generator = flip_images(
-        generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj))
+        generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
+                      enable_preprocess_hist=args.preprocess_hist, enable_preprocess_yuv=args.preprocess_yuv))
 
     model_dir = os.path.join(args.dest, 'model')
     os.makedirs(model_dir, exist_ok=True)
