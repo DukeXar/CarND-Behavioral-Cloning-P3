@@ -4,21 +4,23 @@ import argparse
 import logging
 import os
 import random
-import sys
 import socket
+import sys
 from datetime import datetime
 
+import keras.models
 import keras.regularizers
+import keras.utils
 import numpy as np
 import skimage.io
 import sklearn
 import sklearn.utils
-import cv2
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
 from keras.layers import Flatten, Dense, Lambda, Dropout
 from keras.models import Sequential
+from sklearn.model_selection import train_test_split, KFold
 
 import data
 
@@ -47,7 +49,7 @@ def create_model_nvidia(parameters):
         l2_regularizer = None
 
     model = Sequential()
-    model.add(Cropping2D(cropping=((50, 20), (0, 0)), input_shape=(160, 320, 3)))
+    model.add(Cropping2D(cropping=((59, 35), (60, 60)), input_shape=(160, 320, 3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
     model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
     model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
@@ -84,6 +86,18 @@ def create_model(name, parameters):
     return MODELS[name](parameters)
 
 
+class TrainLogCallback(keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        if logs is None:
+            logs = {}
+
+        items = ", ".join("{}={}".format(k, v) for k, v in logs.items())
+        logging.info('Epoch {}/{} end: {}'.format(epoch + 1, self.params['epochs'], items))
+
+    def on_train_end(self, logs=None):
+        logging.info('Train end: {}'.format(logs))
+
+
 def train_model(model,
                 train_generator,
                 validation_data,
@@ -112,24 +126,23 @@ def train_model(model,
                             'model-' + name + '-improved-{epoch:02d}-{val_loss:.3f}.h5')
 
     checkpoint_callback = ModelCheckpoint(filepath, monitor='val_loss',
-                                          verbose=0, save_weights_only=False,
+                                          verbose=1, save_weights_only=False,
                                           save_best_only=True)
 
     early_stopping_callback = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=10, verbose=1)
 
-    import keras.backend as K
-    import keras.metrics as M
-    def rmse(y_true, y_pred):
-        return K.sqrt(M.mean_squared_error(y_true, y_pred))
+    train_log_callback = TrainLogCallback()
 
-    model.compile(loss=loss_function, optimizer=optimizer, metrics=[rmse])
+    model.compile(loss=loss_function, optimizer=optimizer, metrics=[data.rmse])
     model.fit_generator(train_generator,
                         steps_per_epoch=train_steps_per_epoch,
                         epochs=epochs,
                         initial_epoch=initial_epoch,
                         validation_data=validation_data,
                         validation_steps=validation_steps_per_epoch,
-                        callbacks=[tensorboard_callback, checkpoint_callback, early_stopping_callback])
+                        callbacks=[tensorboard_callback, checkpoint_callback, early_stopping_callback,
+                                   train_log_callback],
+                        verbose=2)
 
 
 def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False):
@@ -153,7 +166,7 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=
         sklearn.utils.shuffle(samples)
 
         for offset in range(0, len(samples), batch_size):
-            batch_samples = samples[offset:offset + batch_size]
+            batch_samples = samples[offset:min(len(samples), offset + batch_size)]
             yield from gen_data(batch_samples, data.Indices.center_image + 1, 0)
 
             if angle_adj is not None:
@@ -200,6 +213,7 @@ def parse_arguments():
     data_group.add_argument('--batchsize', type=int, default=32)
     data_group.add_argument('--angleadj', type=float, default=None, help='Angle adjustment for left-right images')
     data_group.add_argument('--validsize', type=float, default=0.2, help='Validation test size')
+    data_group.add_argument('--kfolds', type=int, default=None, help='Use K-Fold')
     data_group.add_argument('--preprocess-hist', action='store_true',
                             help='Enable yuv conversion and histogram equalization')
     data_group.add_argument('--preprocess-yuv', action='store_true', help='Enable yuv conversion')
@@ -216,6 +230,9 @@ def main():
 
     logging_filename = os.path.join(args.dest, 'clone.log')
     os.makedirs(os.path.dirname(logging_filename), exist_ok=True)
+
+    from tensorflow.python.platform import tf_logging
+    tf_logging._logger.removeHandler(tf_logging._handler)
 
     logging.basicConfig(filename=logging_filename,
                         level=logging.INFO,
@@ -255,37 +272,70 @@ def main():
     else:
         assert False, 'Unsupported mode {}'.format(args.mode)
 
+    keras.utils.layer_utils.print = logging.critical
+    keras.utils.layer_utils.print_summary(model)
+    keras.utils.layer_utils.print = print
+
     logging.info('Loading data')
-
-    train, validation = data.preload_data(args.datadir, valid_test_size=args.validsize)
-
-    logging.critical('Train set size: %d', len(train))
-    logging.critical('Validation set size: %d', len(validation))
-
-    batch_size = args.batchsize
-    train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
-                                                enable_preprocess_hist=args.preprocess_hist,
-                                                enable_preprocess_yuv=args.preprocess_yuv))
-    validation_generator = flip_images(
-        generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
-                      enable_preprocess_hist=args.preprocess_hist, enable_preprocess_yuv=args.preprocess_yuv))
 
     model_dir = os.path.join(args.dest, 'model')
     os.makedirs(model_dir, exist_ok=True)
     tf_logs_dir = os.path.join(args.dest, 'tf_logs')
     os.makedirs(tf_logs_dir, exist_ok=True)
 
-    train_model(model,
-                train_generator,
-                validation_data=validation_generator,
-                train_steps_per_epoch=len(train) / batch_size,
-                validation_steps_per_epoch=len(validation) / batch_size,
-                initial_epoch=initial_epoch,
-                epochs=args.epochs,
-                tf_logs_dir=tf_logs_dir,
-                checkpoints_dir=model_dir,
-                name=args.name,
-                learning_rate=args.learning_rate)
+    if args.kfolds is not None:
+        logging.critical('K-Folds: %s', args.kfolds)
+        data_index = data.preload_data_index(args.datadir)
+
+        # KFold returns an array with indices, use those indices to retrieve actual items
+        # It should be cheap, as our items are just image paths and some float values.
+        def select_data(folds_gen):
+            for fold in folds_gen:
+                train_index, validation_index = fold
+                train = data_index.loc[train_index, :]
+                validation = data_index.loc[validation_index, :]
+                yield train, validation
+
+        folds = select_data(KFold(n_splits=args.kfolds, shuffle=True).split(data_index))
+    else:
+        logging.critical('Validation size: %s', args.validsize)
+        data_index = data.preload_data_index(args.datadir)
+        train, validation = train_test_split(data_index, test_size=args.validsize)
+        folds = [(train, validation)]
+
+    for fold_idx, fold in enumerate(folds):
+        train, validation = fold
+        k_folds = 1 if args.kfolds is None else args.kfolds
+        logging.critical('Running fold %d/%d', fold_idx+1, k_folds)
+        logging.critical('Train set size: %d', len(train))
+        logging.critical('Validation set size: %d', len(validation))
+
+        batch_size = args.batchsize
+        train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
+                                                    enable_preprocess_hist=args.preprocess_hist,
+                                                    enable_preprocess_yuv=args.preprocess_yuv))
+        validation_generator = flip_images(
+            generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
+                          enable_preprocess_hist=args.preprocess_hist, enable_preprocess_yuv=args.preprocess_yuv))
+
+        if args.angleadj is not None:
+            train_steps_per_epoch = int(len(train) * 3 / batch_size)
+            validation_steps_per_epoch = int(len(validation) * 3 / batch_size)
+        else:
+            train_steps_per_epoch = int(len(train) / batch_size)
+            validation_steps_per_epoch = int(len(validation) / batch_size)
+
+        train_model(model,
+                    train_generator,
+                    validation_data=validation_generator,
+                    train_steps_per_epoch=train_steps_per_epoch,
+                    validation_steps_per_epoch=validation_steps_per_epoch,
+                    initial_epoch=initial_epoch,
+                    epochs=args.epochs,
+                    tf_logs_dir=tf_logs_dir,
+                    checkpoints_dir=model_dir,
+                    name=args.name,
+                    learning_rate=args.learning_rate)
 
     model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 

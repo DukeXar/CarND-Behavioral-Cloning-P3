@@ -1,8 +1,13 @@
 import os
 
 import cv2
+import keras.backend as K
+import keras.metrics as M
 import pandas as pd
-from sklearn.model_selection import train_test_split
+
+
+def rmse(y_true, y_pred):
+    return K.sqrt(M.mean_squared_error(y_true, y_pred))
 
 
 class Indices(object):
@@ -22,7 +27,7 @@ def update_filename_in_row(df, row_idx, col_idx, row, root_dir):
     return new_path
 
 
-def preload_data(root_dirs, valid_test_size=0.2):
+def preload_data_index(root_dirs):
     driving_logs = []
     for root in root_dirs:
         df = pd.read_csv(os.path.join(root, 'driving_log.csv'), header=None)
@@ -37,10 +42,10 @@ def preload_data(root_dirs, valid_test_size=0.2):
             update_filename_in_row(df, idx, 'right', row, root)
         df.drop(to_remove, inplace=True)
         driving_logs.append(df)
-    combined_log = pd.concat(driving_logs)
-
-    train, validation = train_test_split(combined_log, test_size=valid_test_size)
-    return train, validation
+    # ignore_index=True is important, as otherwise it generates duplicates in the result
+    # dataset
+    combined_log = pd.concat(driving_logs, ignore_index=True)
+    return combined_log
 
 
 def preprocess_hist(x):
