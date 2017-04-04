@@ -4,14 +4,7 @@ import os
 import argparse
 
 
-def process_root(root, keep_n, dry_run):
-    print('Processing {}'.format(root))
-
-    model_directory = os.path.join(root, 'model')
-    if not os.path.isdir(model_directory):
-        print('Unsupported root {}: {} is not a directory'.format(root, model_directory))
-        return
-
+def process_subdirectory(model_directory, keep_n, dry_run):
     all_models = sorted([fname for fname in os.listdir(model_directory) if fname.endswith('.h5')])
     intermediate_models = [fname for fname in all_models if not fname.endswith('-final.h5')]
 
@@ -24,6 +17,23 @@ def process_root(root, keep_n, dry_run):
         else:
             print('Removing {}'.format(full_path))
             os.remove(full_path)
+
+
+def process_root(root, keep_n, dry_run):
+    print('Processing {}'.format(root))
+
+    model_directory = os.path.join(root, 'model')
+    if not os.path.isdir(model_directory):
+        print('Unsupported root {}: {} is not a directory'.format(root, model_directory))
+        return
+
+    all_folds = [dirname for dirname in os.listdir(model_directory) if dirname.startswith('fold_') and os.path.isdir(dirname)]
+
+    if all_folds:
+        for fold in all_folds:
+            process_subdirectory(os.path.join(model_directory, fold), keep_n, dry_run)
+    else:
+        process_subdirectory(model_directory, keep_n, dry_run)
 
 
 def main():

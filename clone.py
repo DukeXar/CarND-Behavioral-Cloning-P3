@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import functools
 import logging
 import os
 import random
@@ -185,6 +186,12 @@ def flip_images(batch_generator, flip_prob=0.5):
         yield images, angles
 
 
+def log_model_summary(model):
+    keras.utils.layer_utils.print = logging.critical
+    keras.utils.layer_utils.print_summary(model)
+    keras.utils.layer_utils.print = print
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to learn')
@@ -251,37 +258,7 @@ def main():
     logging.critical('Model name: %s', args.name)
     logging.critical('Destination directory: %s', args.dest)
 
-    if args.mode == 'new':
-        logging.critical('Model: %s', args.model)
-
-        model_parameters = {}
-        if args.model_dropout:
-            model_parameters['dropout'] = args.model_dropout
-        if args.model_l2_regularizer:
-            model_parameters['l2_regularizer'] = args.model_l2_regularizer
-
-        model = create_model(args.model, model_parameters)
-        initial_epoch = 0
-
-    elif args.mode == 'continue':
-        logging.critical('Model file: %s', args.model_file)
-        logging.critical('Initial epoch: %d', args.initialepoch)
-        model = keras.models.load_model(args.model_file)
-        initial_epoch = args.initialepoch
-
-    else:
-        assert False, 'Unsupported mode {}'.format(args.mode)
-
-    keras.utils.layer_utils.print = logging.critical
-    keras.utils.layer_utils.print_summary(model)
-    keras.utils.layer_utils.print = print
-
     logging.info('Loading data')
-
-    model_dir = os.path.join(args.dest, 'model')
-    os.makedirs(model_dir, exist_ok=True)
-    tf_logs_dir = os.path.join(args.dest, 'tf_logs')
-    os.makedirs(tf_logs_dir, exist_ok=True)
 
     if args.kfolds is not None:
         logging.critical('K-Folds: %s', args.kfolds)
@@ -296,19 +273,52 @@ def main():
                 validation = data_index.loc[validation_index, :]
                 yield train, validation
 
-        folds = select_data(KFold(n_splits=args.kfolds, shuffle=True).split(data_index))
+        folds = select_data(KFold(n_splits=args.kfolds, shuffle=False).split(data_index))
     else:
         logging.critical('Validation size: %s', args.validsize)
         data_index = data.preload_data_index(args.datadir)
         train, validation = train_test_split(data_index, test_size=args.validsize)
         folds = [(train, validation)]
 
+    if args.mode == 'new':
+        logging.critical('Model: %s', args.model)
+
+        model_parameters = {}
+        if args.model_dropout:
+            model_parameters['dropout'] = args.model_dropout
+        if args.model_l2_regularizer:
+            model_parameters['l2_regularizer'] = args.model_l2_regularizer
+
+        model = create_model(args.model, model_parameters)
+        recreate_model = functools.partial(create_model, name=args.model, parameters=model_parameters)
+        log_model_summary(model)
+        initial_epoch = 0
+
+    elif args.mode == 'continue':
+        logging.critical('Model file: %s', args.model_file)
+        logging.critical('Initial epoch: %d', args.initialepoch)
+        model = keras.models.load_model(args.model_file)
+        recreate_model = functools.partial(keras.models.load_model, args.model_file)
+        initial_epoch = args.initialepoch
+        log_model_summary(model)
+
+    else:
+        assert False, 'Unsupported mode {}'.format(args.mode)
+
     for fold_idx, fold in enumerate(folds):
+        if fold_idx > 0:
+            model = recreate_model()
+
         train, validation = fold
         k_folds = 1 if args.kfolds is None else args.kfolds
         logging.critical('Running fold %d/%d', fold_idx+1, k_folds)
         logging.critical('Train set size: %d', len(train))
         logging.critical('Validation set size: %d', len(validation))
+
+        model_dir = os.path.join(args.dest, 'model', 'fold_{:02d}'.format(fold_idx+1))
+        os.makedirs(model_dir, exist_ok=True)
+        tf_logs_dir = os.path.join(args.dest, 'tf_logs', 'fold_{:02d}'.format(fold_idx+1))
+        os.makedirs(tf_logs_dir, exist_ok=True)
 
         batch_size = args.batchsize
         train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
@@ -337,7 +347,7 @@ def main():
                     name=args.name,
                     learning_rate=args.learning_rate)
 
-    model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
+        model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 
 
 if __name__ == '__main__':
