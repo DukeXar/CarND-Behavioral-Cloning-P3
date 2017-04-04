@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import os
 import argparse
+import os
 
 
 def process_subdirectory(model_directory, keep_n, dry_run):
@@ -27,7 +27,8 @@ def process_root(root, keep_n, dry_run):
         print('Unsupported root {}: {} is not a directory'.format(root, model_directory))
         return
 
-    all_folds = [dirname for dirname in os.listdir(model_directory) if dirname.startswith('fold_') and os.path.isdir(dirname)]
+    all_folds = [dirname for dirname in os.listdir(model_directory) if
+                 dirname.startswith('fold_') and os.path.isdir(os.path.join(model_directory, dirname))]
 
     if all_folds:
         for fold in all_folds:
@@ -50,6 +51,7 @@ def main():
         process_root(root, args.keep_n, args.dry_run)
 
     print('Done')
+
 
 if __name__ == '__main__':
     main()
