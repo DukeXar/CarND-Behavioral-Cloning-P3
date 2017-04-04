@@ -13,6 +13,7 @@ import keras.models
 import keras.regularizers
 import keras.utils
 import numpy as np
+import pandas as pd
 import skimage.io
 import sklearn
 import sklearn.utils
@@ -21,7 +22,7 @@ from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
 from keras.layers import Flatten, Dense, Lambda, Dropout
 from keras.models import Sequential
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import KFold
 
 import data
 
@@ -262,7 +263,10 @@ def main():
 
     if args.kfolds is not None:
         logging.critical('K-Folds: %s', args.kfolds)
-        data_index = data.preload_data_index(args.datadir)
+
+        # ignore_index=True is important, as otherwise it generates duplicates in the result
+        # dataset
+        data_index = pd.concat(data.preload_data_index(args.datadir), ignore_index=True)
 
         # KFold returns an array with indices, use those indices to retrieve actual items
         # It should be cheap, as our items are just image paths and some float values.
@@ -276,9 +280,7 @@ def main():
         folds = select_data(KFold(n_splits=args.kfolds, shuffle=False).split(data_index))
     else:
         logging.critical('Validation size: %s', args.validsize)
-        data_index = data.preload_data_index(args.datadir)
-        train, validation = train_test_split(data_index, test_size=args.validsize)
-        folds = [(train, validation)]
+        folds = data.preload_data_groupped(args.datadir, args.validsize)
 
     if args.mode == 'new':
         logging.critical('Model: %s', args.model)
@@ -297,7 +299,7 @@ def main():
     elif args.mode == 'continue':
         logging.critical('Model file: %s', args.model_file)
         logging.critical('Initial epoch: %d', args.initialepoch)
-        model = keras.models.load_model(args.model_file)
+        model = keras.models.load_model(args.model_file, custom_objects={'rmse': data.rmse})
         recreate_model = functools.partial(keras.models.load_model, args.model_file)
         initial_epoch = args.initialepoch
         log_model_summary(model)

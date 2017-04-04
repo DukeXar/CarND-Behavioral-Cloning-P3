@@ -20,9 +20,14 @@ def get_model_keras_version(model_file):
 
 
 def do_predictions(model_filename, datadirs, batch_size):
-    model = load_model(model_filename)
+    model = load_model(model_filename, custom_objects={'rmse': data.rmse})
 
-    train, validation = data.preload_data(datadirs, valid_test_size=0.0)
+    model_keras_version = get_model_keras_version(model_filename)
+    keras_version_str = str(keras_version).encode('utf-8')
+    if model_keras_version != keras_version_str:
+        logging.info('You are using Keras version %s, but the model was built using %s', model_keras_version, keras_version_str)
+
+    train, validation = data.preload_data_groupped(datadirs, valid_test_size=0.0)[0]
     all_results = []
     for offset in range(0, len(train), batch_size):
         batch_samples = train[offset:offset + batch_size]
@@ -57,35 +62,15 @@ def main():
     logging.critical('Model: %s', args.model)
     logging.critical('Batch size: %d', args.batchsize)
 
-    batch_size = args.batchsize
+    logging.info('Loading data and doing predictions')
 
-    logging.info('Loading data')
+    result = do_predictions(args.model, args.datadir, args.batchsize)
 
-    train, validation = data.preload_data(args.datadir, valid_test_size=0.0)
+    logging.info('Calculating and writing deltas')
 
-    logging.critical('Train set size: %d', len(train))
-    logging.critical('Validation set size: %d', len(validation))
+    result.join(pd.Series(result['steering']-result['predicted'], name='delta'))
+    result.to_excel('./deltas.xls')
 
-    model_keras_version = get_model_keras_version(args.model)
-    keras_version_str = str(keras_version).encode('utf-8')
-    if model_keras_version != keras_version_str:
-        logging.info('You are using Keras version %s, but the model was built using %s', model_keras_version, keras_version_str)
-
-    model = load_model(args.model)
-
-    for offset in range(0, len(train), batch_size):
-        batch_samples = train[offset:offset + batch_size]
-
-        images = np.empty((batch_size,) + data.OUTPUT_SHAPE, np.float32)
-        angles = np.empty((batch_size,), np.float32)
-        for idx, row in enumerate(batch_samples.itertuples()):
-            images[idx] = skimage.io.imread(row[data.Indices.center_image+1])
-            angles[idx] = row[data.Indices.steering+1]
-
-        result = pd.Series(model.predict(images, batch_size=batch_size)[0], name='predicted',
-                           index=range(offset, offset + batch_size))
-
-        #print(pd.Series(angles-result[0], name='delta'))
 
 if __name__ == '__main__':
     main()
