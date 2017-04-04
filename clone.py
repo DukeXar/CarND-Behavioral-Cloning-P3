@@ -17,6 +17,7 @@ import pandas as pd
 import skimage.io
 import sklearn
 import sklearn.utils
+import joblib
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
@@ -110,7 +111,8 @@ def train_model(model,
                 tf_logs_dir,
                 checkpoints_dir,
                 name,
-                learning_rate):
+                learning_rate,
+                early_stopping_patience):
 
     optimizer = keras.optimizers.Adam(lr=learning_rate)
     loss_function = 'mse'
@@ -121,8 +123,10 @@ def train_model(model,
                                                                                  validation_steps_per_epoch,
                                                                                  loss_function, optimizer))
 
+    callbacks = []
     tensorboard_callback = TensorBoard(log_dir=tf_logs_dir, histogram_freq=1,
                                        write_graph=True, write_images=True)
+    callbacks.append(tensorboard_callback)
 
     filepath = os.path.join(checkpoints_dir,
                             'model-' + name + '-improved-{epoch:02d}-{val_loss:.3f}.h5')
@@ -130,10 +134,15 @@ def train_model(model,
     checkpoint_callback = ModelCheckpoint(filepath, monitor='val_loss',
                                           verbose=1, save_weights_only=False,
                                           save_best_only=True)
+    callbacks.append(checkpoint_callback)
 
-    early_stopping_callback = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=10, verbose=1)
+    if early_stopping_patience is not None:
+        early_stopping_callback = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=early_stopping_patience,
+                                                verbose=1)
+        callbacks.append(early_stopping_callback)
 
     train_log_callback = TrainLogCallback()
+    callbacks.append(train_log_callback)
 
     model.compile(loss=loss_function, optimizer=optimizer, metrics=[data.rmse])
     model.fit_generator(train_generator,
@@ -142,9 +151,18 @@ def train_model(model,
                         initial_epoch=initial_epoch,
                         validation_data=validation_data,
                         validation_steps=validation_steps_per_epoch,
-                        callbacks=[tensorboard_callback, checkpoint_callback, early_stopping_callback,
-                                   train_log_callback],
+                        callbacks=callbacks,
                         verbose=2)
+
+
+def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv):
+    image = skimage.io.imread(row[filename_idx])
+    if enable_preprocess_hist:
+        images[idx] = data.preprocess_hist(image)
+    elif enable_preprocess_yuv:
+        images[idx] = data.preprocess_yuv(image)
+    else:
+        images[idx] = image
 
 
 def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False):
@@ -152,14 +170,17 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
 
+        process_image_inline = functools.partial(_process_image_inline, filename_idx=filename_idx,
+                                                 enable_preprocess_hist=enable_preprocess_hist,
+                                                 enable_preprocess_yuv=enable_preprocess_yuv)
+
+        joblib.Parallel(n_jobs=-1, verbose=0, backend="threading")\
+            (joblib.delayed(process_image_inline)(row, images, idx)
+            for idx, row in enumerate(a_batch_samples.itertuples()))
+        #for idx, row in enumerate(a_batch_samples.itertuples()):
+        #    _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv)
+
         for idx, row in enumerate(a_batch_samples.itertuples()):
-            image = skimage.io.imread(row[filename_idx])
-            if enable_preprocess_hist:
-                images[idx] = data.preprocess_hist(image)
-            elif enable_preprocess_yuv:
-                images[idx] = data.preprocess_yuv(image)
-            else:
-                images[idx] = image
             angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
 
         yield sklearn.utils.shuffle(images, angles)
@@ -197,6 +218,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to learn')
     parser.add_argument('--learning-rate', type=float, default=0.0001, help='Learning rate')
+    parser.add_argument('--early-stopping-patience', type=int, default=None, help='Early stopping patience in epochs')
     parser.add_argument('--name', type=str, default='noname', help='Model name')
     default_out_dir = os.path.join('out', datetime.now().isoformat() + '.' + socket.getfqdn())
     parser.add_argument('--dest', type=str, default=default_out_dir, help='Destination directory')
@@ -252,6 +274,7 @@ def main():
     logging.critical('Batch size: %d', args.batchsize)
     logging.critical('Learning rate: %s', args.learning_rate)
     logging.critical('Epochs: %d', args.epochs)
+    logging.critical('Early stopping patience: %s', args.early_stopping_patience)
     logging.critical('Angle adjustment: %s', args.angleadj)
     logging.critical('Histogram equalization and YUV: %s', args.preprocess_hist)
     logging.critical('YUV preprocessing: %s', args.preprocess_yuv)
@@ -347,7 +370,8 @@ def main():
                     tf_logs_dir=tf_logs_dir,
                     checkpoints_dir=model_dir,
                     name=args.name,
-                    learning_rate=args.learning_rate)
+                    learning_rate=args.learning_rate,
+                    early_stopping_patience=args.early_stopping_patience)
 
         model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 
