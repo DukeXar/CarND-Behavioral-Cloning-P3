@@ -33,9 +33,10 @@ def _update_filename_in_row(df, row_idx, col_idx, row, root_dir):
     return new_path
 
 
-def preload_data_index(root_dirs):
+def preload_data_index(root_dirs, remove_straight_drive_threshold):
     """
     Loads index (`driving_log.csv`) from each root directory, preprocesses, and returns as pandas.DataFrame
+    :param remove_straight_drive_threshold: set to remove straight driving longer than certain number of frames
     :param root_dirs: directories to scan
     :return: list of pandas.DataFrame with updated paths
     """
@@ -53,10 +54,27 @@ def preload_data_index(root_dirs):
             _update_filename_in_row(df, idx, 'right', row, root)
         df.drop(to_remove, inplace=True)
         driving_logs.append(df)
+
+    if not remove_straight_drive_threshold:
+        return driving_logs
+
+    for driving_log in driving_logs:
+        to_remove = []
+        this_iteration = []
+        for idx, row in driving_log.iterrows():
+            if row['steering'] == 0.0:
+                this_iteration.append(idx)
+            else:
+                if len(this_iteration) > remove_straight_drive_threshold:
+                    #print('Found straight drive from {} to {}'.format(this_iteration[0], this_iteration[-1]))
+                    to_remove.extend(this_iteration[1:])
+                this_iteration = []
+        driving_log.drop(to_remove, inplace=True)
+
     return driving_logs
 
 
-def preload_data_groupped(root_dirs, valid_test_size):
+def preload_data_groupped(root_dirs, valid_test_size, remove_straight_drive_threshold):
     """
     Loads index (`driving_log.csv`) from each root directory, and splits each into train and validation subsets.
     Returns all train sets and validation sets combined together.
@@ -64,7 +82,7 @@ def preload_data_groupped(root_dirs, valid_test_size):
     :param valid_test_size: proportion of validation test in each index
     :return: list with a single tuple of (train_set, validation_set), where each set is a pandas.DataFrame
     """
-    data_indices = preload_data_index(root_dirs)
+    data_indices = preload_data_index(root_dirs, remove_straight_drive_threshold)
     data_sets = [train_test_split(data_index, test_size=valid_test_size) for data_index in data_indices]
     train_sets = []
     validation_sets = []

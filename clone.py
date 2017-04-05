@@ -7,7 +7,6 @@ import os
 import random
 import socket
 import sys
-import threading
 from datetime import datetime
 
 import keras.models
@@ -166,38 +165,7 @@ def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist
         images[idx] = image
 
 
-class threadsafe_iter:
-    """Takes an iterator/generator and makes it thread-safe by
-    serializing call to the `next` method of given iterator/generator.
-    """
-
-    def __init__(self, it):
-        self.it = it
-        self.lock = threading.Lock()
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        with self.lock:
-            return next(self.it)
-
-    __next__ = next
-
-
-def threadsafe_generator(f):
-    """A decorator that takes a generator function and makes it thread-safe.
-    """
-
-    def g(*a, **kw):
-        return threadsafe_iter(f(*a, **kw))
-
-    return g
-
-
-@threadsafe_generator
 def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False):
-    @threadsafe_generator
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
@@ -211,7 +179,7 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=
         yield sklearn.utils.shuffle(images, angles)
 
     while True:
-        sklearn.utils.shuffle(samples)
+        samples = sklearn.utils.shuffle(samples)
 
         for offset in range(0, len(samples), batch_size):
             batch_samples = samples[offset:min(len(samples), offset + batch_size)]
@@ -222,7 +190,6 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=
                 yield from gen_data(batch_samples, data.Indices.right_image + 1, -angle_adj)
 
 
-@threadsafe_generator
 def flip_images(batch_generator, flip_prob=0.5):
     for batch_images, batch_angles in batch_generator:
         images = batch_images.copy()
@@ -274,6 +241,8 @@ def parse_arguments():
     data_group.add_argument('--preprocess-hist', action='store_true',
                             help='Enable yuv conversion and histogram equalization')
     data_group.add_argument('--preprocess-yuv', action='store_true', help='Enable yuv conversion')
+    data_group.add_argument('--remove-straight-drive-threshold', type=int, default=0,
+                            help='Remove straight driving longer than THRESHOLD frames')
 
     new_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
     cont_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
@@ -305,6 +274,7 @@ def main():
     logging.critical('Angle adjustment: %s', args.angleadj)
     logging.critical('Histogram equalization and YUV: %s', args.preprocess_hist)
     logging.critical('YUV preprocessing: %s', args.preprocess_yuv)
+    logging.critical('Remove straight drive threshold: %s', args.remove_straight_drive_threshold)
     logging.critical('Validation set size: %s', args.validsize)
     logging.critical('Model name: %s', args.name)
     logging.critical('Destination directory: %s', args.dest)
@@ -317,7 +287,8 @@ def main():
 
         # ignore_index=True is important, as otherwise it generates duplicates in the result
         # dataset
-        data_index = pd.concat(data.preload_data_index(args.datadir), ignore_index=True)
+        data_index = pd.concat(data.preload_data_index(args.datadir, args.remove_straight_drive_threshold),
+                               ignore_index=True)
 
         # KFold returns an array with indices, use those indices to retrieve actual items
         # It should be cheap, as our items are just image paths and some float values.
@@ -331,7 +302,7 @@ def main():
         folds = select_data(KFold(n_splits=args.kfolds, shuffle=False).split(data_index))
     else:
         logging.critical('Validation size: %s', args.validsize)
-        folds = data.preload_data_groupped(args.datadir, args.validsize)
+        folds = data.preload_data_groupped(args.datadir, args.validsize, args.remove_straight_drive_threshold)
 
     if args.mode == 'new':
         logging.critical('Model: %s', args.model)
