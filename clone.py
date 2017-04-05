@@ -7,6 +7,7 @@ import os
 import random
 import socket
 import sys
+import threading
 from datetime import datetime
 
 import keras.models
@@ -17,7 +18,6 @@ import pandas as pd
 import skimage.io
 import sklearn
 import sklearn.utils
-import joblib
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
@@ -112,16 +112,16 @@ def train_model(model,
                 checkpoints_dir,
                 name,
                 learning_rate,
-                early_stopping_patience):
-
+                early_stopping_patience,
+                workers):
     optimizer = keras.optimizers.Adam(lr=learning_rate)
     loss_function = 'mse'
 
     logging.info(('Training model {}: epochs={}, initial_epoch={}, train_steps_per_epoch={}, '
-                  'validation_steps_per_epoch={}, loss={}, optimizer={}').format(name, epochs, initial_epoch,
-                                                                                 train_steps_per_epoch,
-                                                                                 validation_steps_per_epoch,
-                                                                                 loss_function, optimizer))
+                  'validation_steps_per_epoch={}, loss={}, optimizer={}, early_stopping_patience={}, '
+                  'learning_rate={}').format(name, epochs, initial_epoch, train_steps_per_epoch,
+                                             validation_steps_per_epoch, loss_function, optimizer,
+                                             early_stopping_patience, learning_rate))
 
     callbacks = []
     tensorboard_callback = TensorBoard(log_dir=tf_logs_dir, histogram_freq=1,
@@ -152,7 +152,8 @@ def train_model(model,
                         validation_data=validation_data,
                         validation_steps=validation_steps_per_epoch,
                         callbacks=callbacks,
-                        verbose=2)
+                        verbose=2,
+                        workers=workers)
 
 
 def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv):
@@ -165,20 +166,44 @@ def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist
         images[idx] = image
 
 
+class threadsafe_iter:
+    """Takes an iterator/generator and makes it thread-safe by
+    serializing call to the `next` method of given iterator/generator.
+    """
+
+    def __init__(self, it):
+        self.it = it
+        self.lock = threading.Lock()
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        with self.lock:
+            return next(self.it)
+
+    __next__ = next
+
+
+def threadsafe_generator(f):
+    """A decorator that takes a generator function and makes it thread-safe.
+    """
+
+    def g(*a, **kw):
+        return threadsafe_iter(f(*a, **kw))
+
+    return g
+
+
+@threadsafe_generator
 def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False):
+    @threadsafe_generator
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
 
-        process_image_inline = functools.partial(_process_image_inline, filename_idx=filename_idx,
-                                                 enable_preprocess_hist=enable_preprocess_hist,
-                                                 enable_preprocess_yuv=enable_preprocess_yuv)
-
-        joblib.Parallel(n_jobs=-1, verbose=0, backend="threading")\
-            (joblib.delayed(process_image_inline)(row, images, idx)
-            for idx, row in enumerate(a_batch_samples.itertuples()))
-        #for idx, row in enumerate(a_batch_samples.itertuples()):
-        #    _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv)
+        for idx, row in enumerate(a_batch_samples.itertuples()):
+            _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv)
 
         for idx, row in enumerate(a_batch_samples.itertuples()):
             angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
@@ -197,6 +222,7 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=
                 yield from gen_data(batch_samples, data.Indices.right_image + 1, -angle_adj)
 
 
+@threadsafe_generator
 def flip_images(batch_generator, flip_prob=0.5):
     for batch_images, batch_angles in batch_generator:
         images = batch_images.copy()
@@ -216,6 +242,7 @@ def log_model_summary(model):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--workers', type=int, default=1, help='Number of Keras workers')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to learn')
     parser.add_argument('--learning-rate', type=float, default=0.0001, help='Learning rate')
     parser.add_argument('--early-stopping-patience', type=int, default=None, help='Early stopping patience in epochs')
@@ -281,6 +308,7 @@ def main():
     logging.critical('Validation set size: %s', args.validsize)
     logging.critical('Model name: %s', args.name)
     logging.critical('Destination directory: %s', args.dest)
+    logging.critical('Number of workers: %d', args.workers)
 
     logging.info('Loading data')
 
@@ -336,13 +364,13 @@ def main():
 
         train, validation = fold
         k_folds = 1 if args.kfolds is None else args.kfolds
-        logging.critical('Running fold %d/%d', fold_idx+1, k_folds)
+        logging.critical('Running fold %d/%d', fold_idx + 1, k_folds)
         logging.critical('Train set size: %d', len(train))
         logging.critical('Validation set size: %d', len(validation))
 
-        model_dir = os.path.join(args.dest, 'model', 'fold_{:02d}'.format(fold_idx+1))
+        model_dir = os.path.join(args.dest, 'model', 'fold_{:02d}'.format(fold_idx + 1))
         os.makedirs(model_dir, exist_ok=True)
-        tf_logs_dir = os.path.join(args.dest, 'tf_logs', 'fold_{:02d}'.format(fold_idx+1))
+        tf_logs_dir = os.path.join(args.dest, 'tf_logs', 'fold_{:02d}'.format(fold_idx + 1))
         os.makedirs(tf_logs_dir, exist_ok=True)
 
         batch_size = args.batchsize
@@ -371,7 +399,8 @@ def main():
                     checkpoints_dir=model_dir,
                     name=args.name,
                     learning_rate=args.learning_rate,
-                    early_stopping_patience=args.early_stopping_patience)
+                    early_stopping_patience=args.early_stopping_patience,
+                    workers=args.workers)
 
         model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 
