@@ -15,6 +15,8 @@ import keras.utils
 import numpy as np
 import pandas as pd
 import skimage.io
+import skimage.color
+import skimage.transform
 import sklearn
 import sklearn.utils
 from keras.callbacks import ModelCheckpoint, EarlyStopping
@@ -225,23 +227,28 @@ def train_model(model,
                         workers=workers)
 
 
-def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv):
+def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv,
+                          enable_preprocess_hsv):
     image = skimage.io.imread(row[filename_idx])
     if enable_preprocess_hist:
         images[idx] = data.preprocess_hist(image)
     elif enable_preprocess_yuv:
         images[idx] = data.preprocess_yuv(image)
+    elif enable_preprocess_hsv:
+        images[idx] = skimage.color.rgb2hsv(image)
     else:
         images[idx] = image
 
 
-def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False):
+def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False,
+                  enable_preprocess_hsv=False):
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
 
         for idx, row in enumerate(a_batch_samples.itertuples()):
-            _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv)
+            _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv,
+                                  enable_preprocess_hsv)
 
         for idx, row in enumerate(a_batch_samples.itertuples()):
             angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
@@ -268,6 +275,18 @@ def flip_images(batch_generator, flip_prob=0.5):
         for idx in indices:
             images[idx] = np.fliplr(images[idx])
             angles[idx] = -angles[idx]
+        yield images, angles
+
+
+def shift_images(batch_generator, shift_prob=0.5):
+    for batch_images, batch_angles in batch_generator:
+        images = batch_images.copy()
+        angles = batch_angles.copy()
+        indices = random.sample(range(0, len(batch_images)), int(len(batch_images) * shift_prob))
+        for idx in indices:
+            images[idx] = skimage.transform.warp(
+                images[idx] / 255., skimage.transform.AffineTransform(translation=np.random.randint(-4, 4))) * 255.
+            #angles[idx] = -angles[idx]
         yield images, angles
 
 
@@ -312,6 +331,7 @@ def parse_arguments():
     data_group.add_argument('--preprocess-hist', action='store_true',
                             help='Enable yuv conversion and histogram equalization')
     data_group.add_argument('--preprocess-yuv', action='store_true', help='Enable yuv conversion')
+    data_group.add_argument('--preprocess-hsv', action='store_true', help='Enable hsv conversion')
     data_group.add_argument('--remove-straight-drive-threshold', type=int, default=0,
                             help='Remove straight driving longer than THRESHOLD frames')
 
@@ -416,16 +436,16 @@ def main():
         os.makedirs(tf_logs_dir, exist_ok=True)
 
         batch_size = args.batchsize
-        train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
+        train_generator = shift_images(flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
                                                     enable_preprocess_hist=args.preprocess_hist,
-                                                    enable_preprocess_yuv=args.preprocess_yuv))
+                                                    enable_preprocess_yuv=args.preprocess_yuv)))
         validation_generator = flip_images(
             generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
                           enable_preprocess_hist=args.preprocess_hist, enable_preprocess_yuv=args.preprocess_yuv))
 
         if args.angleadj is not None:
-            train_steps_per_epoch = int(len(train) * 3 / batch_size)
-            validation_steps_per_epoch = int(len(validation) * 3 / batch_size)
+            train_steps_per_epoch = int(len(train) * 4 / batch_size)
+            validation_steps_per_epoch = int(len(validation) * 4 / batch_size)
         else:
             train_steps_per_epoch = int(len(train) / batch_size)
             validation_steps_per_epoch = int(len(validation) / batch_size)
