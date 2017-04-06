@@ -94,8 +94,14 @@ def create_model_vgg16(parameters):
         layer.trainable = False
 
     x = Flatten(name='flatten')(vgg16_conv.output)
-    x = Dense(4096, activation='relu', name='fc1')(x)
-    x = Dense(4096, activation='relu', name='fc2')(x)
+    if dropout:
+        x = Dropout(rate=dropout)(x)
+    x = Dense(4096, activation='relu', name='fc1', kernel_regularizer=l2_regularizer)(x)
+    if dropout:
+        x = Dropout(rate=dropout)(x)
+    x = Dense(4096, activation='relu', name='fc2', kernel_regularizer=l2_regularizer)(x)
+    if dropout:
+        x = Dropout(rate=dropout)(x)
     x = Dense(1, name='predictions', kernel_regularizer=l2_regularizer)(x)
 
     model = Model(inputs=input, outputs=x)
