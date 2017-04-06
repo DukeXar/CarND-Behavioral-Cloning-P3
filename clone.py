@@ -20,8 +20,9 @@ import sklearn.utils
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
-from keras.layers import Flatten, Dense, Lambda, Dropout
-from keras.models import Sequential
+from keras.layers import Flatten, Dense, Lambda, Dropout, Input
+from keras.models import Sequential, Model
+from keras.applications import VGG16
 from sklearn.model_selection import KFold
 
 import data
@@ -75,9 +76,36 @@ def create_model_nvidia(parameters):
     return model
 
 
+def create_model_vgg16(parameters):
+    dropout = parameters.get('dropout', 0)
+    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
+
+    if l2_regularizer_lambda:
+        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
+    else:
+        l2_regularizer = None
+
+    input = Input(shape=(160, 320, 3))
+    x = Cropping2D(cropping=((59, 35), (60, 60)))(input)
+    x = Lambda(lambda x: x / 255.0 - 0.5)(x)
+
+    vgg16_conv = VGG16(include_top=False, weights='imagenet', input_tensor=x)
+    for layer in vgg16_conv.layers:
+        layer.trainable = False
+
+    x = Flatten(name='flatten')(vgg16_conv.output)
+    x = Dense(4096, activation='relu', name='fc1')(x)
+    x = Dense(4096, activation='relu', name='fc2')(x)
+    x = Dense(1, name='predictions', kernel_regularizer=l2_regularizer)(x)
+
+    model = Model(inputs=input, outputs=x)
+    return model
+
+
 MODELS = {
     'lenet': create_model_lenet,
-    'nvidia': create_model_nvidia
+    'nvidia': create_model_nvidia,
+    'vgg16': create_model_vgg16
 }
 
 DEFAULT_MODEL = 'nvidia'
@@ -112,7 +140,8 @@ def train_model(model,
                 name,
                 learning_rate,
                 early_stopping_patience,
-                workers):
+                workers,
+                verbose):
     optimizer = keras.optimizers.Adam(lr=learning_rate)
     loss_function = 'mse'
 
@@ -151,7 +180,7 @@ def train_model(model,
                         validation_data=validation_data,
                         validation_steps=validation_steps_per_epoch,
                         callbacks=callbacks,
-                        verbose=2,
+                        verbose=verbose,
                         workers=workers)
 
 
@@ -209,6 +238,7 @@ def log_model_summary(model):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--verbose', type=int, default=2, help='Keras verbosity')
     parser.add_argument('--workers', type=int, default=1, help='Number of Keras workers')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to learn')
     parser.add_argument('--learning-rate', type=float, default=0.0001, help='Learning rate')
@@ -371,7 +401,8 @@ def main():
                     name=args.name,
                     learning_rate=args.learning_rate,
                     early_stopping_patience=args.early_stopping_patience,
-                    workers=args.workers)
+                    workers=args.workers,
+                    verbose=args.verbose)
 
         model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 
