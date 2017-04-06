@@ -88,7 +88,7 @@ def create_model_nvidia_2(parameters):
         l2_regularizer = None
 
     model = Sequential()
-    model.add(Cropping2D(cropping=((35, 35), (60, 60)), input_shape=(160, 320, 3)))
+    model.add(Cropping2D(cropping=((80, 25), (35, 35)), input_shape=(160, 320, 3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
     model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
     model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
@@ -284,9 +284,10 @@ def shift_images(batch_generator, shift_prob=0.5):
         angles = batch_angles.copy()
         indices = random.sample(range(0, len(batch_images)), int(len(batch_images) * shift_prob))
         for idx in indices:
+            shift_x = np.random.randint(-4, 4)
             images[idx] = skimage.transform.warp(
-                images[idx] / 255., skimage.transform.AffineTransform(translation=np.random.randint(-4, 4))) * 255.
-            #angles[idx] = -angles[idx]
+                images[idx] / 255., skimage.transform.AffineTransform(translation=(shift_x, 0))) * 255.
+            angles[idx] = angles[idx] + (shift_x) * 0.2
         yield images, angles
 
 
@@ -436,9 +437,9 @@ def main():
         os.makedirs(tf_logs_dir, exist_ok=True)
 
         batch_size = args.batchsize
-        train_generator = shift_images(flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
+        train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
                                                     enable_preprocess_hist=args.preprocess_hist,
-                                                    enable_preprocess_yuv=args.preprocess_yuv)))
+                                                    enable_preprocess_yuv=args.preprocess_yuv))
         validation_generator = flip_images(
             generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
                           enable_preprocess_hist=args.preprocess_hist, enable_preprocess_yuv=args.preprocess_yuv))
