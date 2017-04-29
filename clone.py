@@ -360,8 +360,8 @@ def generate_data(samples, batch_size, angle_adj, random_state=None,
     while True:
         current_samples = sklearn.utils.shuffle(current_samples)
 
-        for offset in range(0, len(samples), batch_size):
-            batch_samples = samples[offset:min(len(samples), offset + batch_size)]
+        for offset in range(0, len(current_samples), batch_size):
+            batch_samples = current_samples[offset:min(len(current_samples), offset + batch_size)]
 
             if angle_adj is not None:
                 mode = np.random.random_integers(1, 3)
