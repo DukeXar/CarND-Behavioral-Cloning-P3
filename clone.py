@@ -146,6 +146,67 @@ def create_model_nvidia_3(parameters):
     return model
 
 
+def create_model_nvidia_4(parameters):
+    dropout = parameters.get('dropout', 0)
+    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
+
+    if l2_regularizer_lambda:
+        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
+    else:
+        l2_regularizer = None
+
+    model = Sequential()
+    model.add(Cropping2D(cropping=((74, 20), (35, 35)), input_shape=(160, 320, 3)))
+    model.add(Lambda(lambda x: x / 255.0 - 0.5))
+    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Flatten())
+
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(100, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(50, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(10, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(1, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    return model
+
+
+def create_model_commaai(parameters):
+    dropout = parameters.get('dropout', 0)
+    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
+
+    if l2_regularizer_lambda:
+        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
+    else:
+        l2_regularizer = None
+
+    model = Sequential()
+    model.add(Cropping2D(cropping=((74, 20), (35, 35)), input_shape=(160, 320, 3)))
+    model.add(Lambda(lambda x: x / 255.0 - 0.5))
+
+    model.add(Conv2D(16, (8, 8), strides=(4, 4), padding='same', activation='elu'))
+    model.add(Conv2D(32, (5, 5), strides=(2, 2), padding='same', activation='elu'))
+    model.add(Conv2D(64, (5, 5), strides=(2, 2), padding='same', activation='elu'))
+    model.add(Flatten())
+
+    if dropout:
+        model.add(Dropout(rate=dropout)) # 0.2
+    model.add(Dense(512, activation='elu'))
+    if dropout:
+        model.add(Dropout(rate=dropout)) # 0.5
+    model.add(Dense(1))
+    return model
+
+
 def create_model_vgg16(parameters):
     dropout = parameters.get('dropout', 0)
     l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
@@ -183,7 +244,9 @@ MODELS = {
     'nvidia': create_model_nvidia,
     'vgg16': create_model_vgg16,
     'nvidia2': create_model_nvidia_2,
-    'nvidia3': create_model_nvidia_3
+    'nvidia3': create_model_nvidia_3,
+    'nvidia4': create_model_nvidia_4,
+    'commaai': create_model_commaai
 }
 
 DEFAULT_MODEL = 'nvidia'
@@ -273,33 +336,6 @@ def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist
         images[idx] = skimage.color.rgb2hsv(image)
     else:
         images[idx] = image
-
-
-def generate_data_old(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False,
-                      enable_preprocess_hsv=False):
-    def gen_data(a_batch_samples, filename_idx, an_angle_adj):
-        images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
-        angles = np.empty((len(a_batch_samples),), np.float32)
-
-        for idx, row in enumerate(a_batch_samples.itertuples()):
-            _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv,
-                                  enable_preprocess_hsv)
-
-        for idx, row in enumerate(a_batch_samples.itertuples()):
-            angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
-
-        yield sklearn.utils.shuffle(images, angles)
-
-    while True:
-        samples = sklearn.utils.shuffle(samples)
-
-        for offset in range(0, len(samples), batch_size):
-            batch_samples = samples[offset:min(len(samples), offset + batch_size)]
-            yield from gen_data(batch_samples, data.Indices.center_image + 1, 0)
-
-            if angle_adj is not None:
-                yield from gen_data(batch_samples, data.Indices.left_image + 1, angle_adj)
-                yield from gen_data(batch_samples, data.Indices.right_image + 1, -angle_adj)
 
 
 def generate_data(samples, batch_size, angle_adj, random_state=None,
