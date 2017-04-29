@@ -64,82 +64,14 @@ def create_model_nvidia(parameters):
     model.add(Flatten())
 
     if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(100, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+        model.add(Dropout(rate=0.2))
+    model.add(Dense(100, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=0.2))
+    model.add(Dense(50, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(50, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(10, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(1, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    return model
-
-
-def create_model_nvidia_2(parameters):
-    dropout = parameters.get('dropout', 0)
-    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
-
-    if l2_regularizer_lambda:
-        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
-    else:
-        l2_regularizer = None
-
-    model = Sequential()
-    model.add(Cropping2D(cropping=((74, 20), (35, 35)), input_shape=(160, 320, 3)))
-    model.add(Lambda(lambda x: x / 255.0 - 0.5))
-    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(Flatten())
-
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(512, kernel_regularizer=l2_regularizer))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(512, kernel_regularizer=l2_regularizer))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(16, kernel_regularizer=l2_regularizer))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(1, kernel_regularizer=l2_regularizer))
-    return model
-
-
-def create_model_nvidia_3(parameters):
-    dropout = parameters.get('dropout', 0)
-    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
-
-    if l2_regularizer_lambda:
-        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
-    else:
-        l2_regularizer = None
-
-    model = Sequential()
-    model.add(Cropping2D(cropping=((74, 20), (35, 35)), input_shape=(160, 320, 3)))
-    model.add(Lambda(lambda x: x / 255.0 - 0.5))
-    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(Flatten())
-
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(100, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(50, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(10, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    model.add(Dense(10, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=dropout))
     model.add(Dense(1, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
@@ -166,10 +98,10 @@ def create_model_nvidia_4(parameters):
     model.add(Flatten())
 
     if dropout:
-        model.add(Dropout(rate=dropout))
+        model.add(Dropout(rate=0.2))
     model.add(Dense(100, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
-        model.add(Dropout(rate=dropout))
+        model.add(Dropout(rate=0.2))
     model.add(Dense(50, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=dropout))
@@ -199,7 +131,7 @@ def create_model_commaai(parameters):
     model.add(Flatten())
 
     if dropout:
-        model.add(Dropout(rate=dropout)) # 0.2
+        model.add(Dropout(rate=0.2)) # 0.2
     model.add(Dense(512, activation='elu'))
     if dropout:
         model.add(Dropout(rate=dropout)) # 0.5
@@ -243,8 +175,6 @@ MODELS = {
     'lenet': create_model_lenet,
     'nvidia': create_model_nvidia,
     'vgg16': create_model_vgg16,
-    'nvidia2': create_model_nvidia_2,
-    'nvidia3': create_model_nvidia_3,
     'nvidia4': create_model_nvidia_4,
     'commaai': create_model_commaai
 }
