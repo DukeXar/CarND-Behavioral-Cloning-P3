@@ -40,6 +40,13 @@ def normalize_files(datadir):
     driving_log = pd.read_csv(log_filename, header=None)
     os.rename(log_filename, log_filename + '.bak')
 
+    #to_drop = []
+    #for idx, row in driving_log.iterrows():
+    #    if not all((os.path.exists(row[Indices.center_image]), os.path.exists(row[Indices.left_image]), os.path.exists(row[Indices.right_image]))):
+    #        to_drop.append(idx)
+    #
+    #driving_log.drop(to_drop, inplace=True)
+
     for idx, row in driving_log.iterrows():
         driving_log.set_value(idx, Indices.center_image, rename_image(row[Indices.center_image]))
         driving_log.set_value(idx, Indices.left_image, rename_image(row[Indices.left_image]))

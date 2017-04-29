@@ -3,6 +3,7 @@ import os
 import cv2
 import keras
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
 
 
@@ -59,17 +60,16 @@ def preload_data_index(root_dirs, remove_straight_drive_threshold):
         return driving_logs
 
     for driving_log in driving_logs:
-        to_remove = []
-        this_iteration = []
+        zero_indices = []
+
         for idx, row in driving_log.iterrows():
             if row['steering'] == 0.0:
-                this_iteration.append(idx)
-            else:
-                if len(this_iteration) > remove_straight_drive_threshold:
-                    #print('Found straight drive from {} to {}'.format(this_iteration[0], this_iteration[-1]))
-                    to_remove.extend(this_iteration[1:])
-                this_iteration = []
-        driving_log.drop(to_remove, inplace=True)
+                zero_indices.append(idx)
+
+        delta = int(remove_straight_drive_threshold * len(zero_indices))
+        if delta > 0:
+            to_remove = np.random.choice(zero_indices, delta, replace=False)
+            driving_log.drop(to_remove, inplace=True)
 
     return driving_logs
 

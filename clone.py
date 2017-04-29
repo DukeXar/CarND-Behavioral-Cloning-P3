@@ -14,17 +14,17 @@ import keras.regularizers
 import keras.utils
 import numpy as np
 import pandas as pd
-import skimage.io
 import skimage.color
+import skimage.io
 import skimage.transform
 import sklearn
 import sklearn.utils
+from keras.applications import VGG16
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
 from keras.layers import Conv2D, MaxPooling2D, Cropping2D
 from keras.layers import Flatten, Dense, Lambda, Dropout, Input
 from keras.models import Sequential, Model
-from keras.applications import VGG16
 from sklearn.model_selection import KFold
 
 import data
@@ -54,7 +54,7 @@ def create_model_nvidia(parameters):
         l2_regularizer = None
 
     model = Sequential()
-    model.add(Cropping2D(cropping=((59, 35), (60, 60)), input_shape=(160, 320, 3)))
+    model.add(Cropping2D(cropping=((59, 35), (35, 35)), input_shape=(160, 320, 3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
     model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
     model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
@@ -65,16 +65,16 @@ def create_model_nvidia(parameters):
 
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(100, kernel_regularizer=l2_regularizer))
+    model.add(Dense(100, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(50, kernel_regularizer=l2_regularizer))
+    model.add(Dense(50, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(10, kernel_regularizer=l2_regularizer))
+    model.add(Dense(10, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=dropout))
-    model.add(Dense(1, kernel_regularizer=l2_regularizer))
+    model.add(Dense(1, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     return model
 
 
@@ -88,7 +88,7 @@ def create_model_nvidia_2(parameters):
         l2_regularizer = None
 
     model = Sequential()
-    model.add(Cropping2D(cropping=((80, 25), (35, 35)), input_shape=(160, 320, 3)))
+    model.add(Cropping2D(cropping=((74, 20), (35, 35)), input_shape=(160, 320, 3)))
     model.add(Lambda(lambda x: x / 255.0 - 0.5))
     model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
     model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
@@ -109,6 +109,40 @@ def create_model_nvidia_2(parameters):
     if dropout:
         model.add(Dropout(rate=dropout))
     model.add(Dense(1, kernel_regularizer=l2_regularizer))
+    return model
+
+
+def create_model_nvidia_3(parameters):
+    dropout = parameters.get('dropout', 0)
+    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
+
+    if l2_regularizer_lambda:
+        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
+    else:
+        l2_regularizer = None
+
+    model = Sequential()
+    model.add(Cropping2D(cropping=((74, 20), (35, 35)), input_shape=(160, 320, 3)))
+    model.add(Lambda(lambda x: x / 255.0 - 0.5))
+    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Flatten())
+
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(100, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(50, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(10, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
+    if dropout:
+        model.add(Dropout(rate=dropout))
+    model.add(Dense(1, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     return model
 
 
@@ -148,7 +182,8 @@ MODELS = {
     'lenet': create_model_lenet,
     'nvidia': create_model_nvidia,
     'vgg16': create_model_vgg16,
-    'nvidia2': create_model_nvidia_2
+    'nvidia2': create_model_nvidia_2,
+    'nvidia3': create_model_nvidia_3
 }
 
 DEFAULT_MODEL = 'nvidia'
@@ -240,8 +275,8 @@ def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist
         images[idx] = image
 
 
-def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False,
-                  enable_preprocess_hsv=False):
+def generate_data_old(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=False, enable_preprocess_yuv=False,
+                      enable_preprocess_hsv=False):
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
@@ -265,6 +300,56 @@ def generate_data(samples, batch_size=32, angle_adj=0.1, enable_preprocess_hist=
             if angle_adj is not None:
                 yield from gen_data(batch_samples, data.Indices.left_image + 1, angle_adj)
                 yield from gen_data(batch_samples, data.Indices.right_image + 1, -angle_adj)
+
+
+def generate_data(samples, batch_size, angle_adj, random_state=None,
+                  enable_preprocess_hist=False, enable_preprocess_yuv=False, enable_preprocess_hsv=False):
+    def gen_data(a_batch_samples, filename_idx, an_angle_adj):
+        images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
+        angles = np.empty((len(a_batch_samples),), np.float32)
+
+        for idx, row in enumerate(a_batch_samples.itertuples()):
+            _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv,
+                                  enable_preprocess_hsv)
+
+        for idx, row in enumerate(a_batch_samples.itertuples()):
+            angles[idx] = row[data.Indices.steering + 1] + an_angle_adj
+
+        return sklearn.utils.shuffle(images, angles)
+
+    if random_state is not None:
+        np.random.seed(random_state)
+
+    current_samples = samples
+    while True:
+        current_samples = sklearn.utils.shuffle(current_samples)
+
+        for offset in range(0, len(samples), batch_size):
+            batch_samples = samples[offset:min(len(samples), offset + batch_size)]
+
+            if angle_adj is not None:
+                mode = np.random.random_integers(1, 3)
+            else:
+                mode = 1
+
+            if mode == 1:
+                batch = gen_data(batch_samples, data.Indices.center_image + 1, 0)
+            elif mode == 2:
+                batch = gen_data(batch_samples, data.Indices.left_image + 1, angle_adj)
+            else:
+                batch = gen_data(batch_samples, data.Indices.right_image + 1, -angle_adj)
+
+            do_flip = np.random.random_integers(0, 1)
+
+            if do_flip:
+                images, angles = batch[0].copy(), batch[1].copy()
+                angles = -angles
+                for i in range(len(images)):
+                    images[i] = np.fliplr(images[i])
+
+                batch = images, angles
+
+            yield batch
 
 
 def flip_images(batch_generator, flip_prob=0.5):
@@ -333,8 +418,8 @@ def parse_arguments():
                             help='Enable yuv conversion and histogram equalization')
     data_group.add_argument('--preprocess-yuv', action='store_true', help='Enable yuv conversion')
     data_group.add_argument('--preprocess-hsv', action='store_true', help='Enable hsv conversion')
-    data_group.add_argument('--remove-straight-drive-threshold', type=int, default=0,
-                            help='Remove straight driving longer than THRESHOLD frames')
+    data_group.add_argument('--remove-straight-drive-threshold', type=float, default=0.0,
+                            help='Proportion of straight driving frames to remove')
 
     new_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
     cont_model_parser.add_argument('datadir', type=str, nargs='+', help='Directories with data')
@@ -437,19 +522,22 @@ def main():
         os.makedirs(tf_logs_dir, exist_ok=True)
 
         batch_size = args.batchsize
-        train_generator = flip_images(generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
-                                                    enable_preprocess_hist=args.preprocess_hist,
-                                                    enable_preprocess_yuv=args.preprocess_yuv))
-        validation_generator = flip_images(
-            generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
-                          enable_preprocess_hist=args.preprocess_hist, enable_preprocess_yuv=args.preprocess_yuv))
+        train_generator = generate_data(train, batch_size=batch_size, angle_adj=args.angleadj,
+                                        enable_preprocess_hist=args.preprocess_hist,
+                                        enable_preprocess_yuv=args.preprocess_yuv)
+        validation_generator = generate_data(validation, batch_size=batch_size, angle_adj=args.angleadj,
+                                             enable_preprocess_hist=args.preprocess_hist,
+                                             enable_preprocess_yuv=args.preprocess_yuv)
 
         if args.angleadj is not None:
-            train_steps_per_epoch = int(len(train) * 4 / batch_size)
-            validation_steps_per_epoch = int(len(validation) * 4 / batch_size)
+            # 3 angles * 2 flips
+            scale = 6 / batch_size
         else:
-            train_steps_per_epoch = int(len(train) / batch_size)
-            validation_steps_per_epoch = int(len(validation) / batch_size)
+            # 2 flips
+            scale = 2 / batch_size
+
+        train_steps_per_epoch = int(len(train) * scale)
+        validation_steps_per_epoch = int(len(validation) * scale)
 
         train_model(model,
                     train_generator,
