@@ -4,7 +4,6 @@ import argparse
 import functools
 import logging
 import os
-import random
 import socket
 import sys
 from datetime import datetime
@@ -22,60 +21,12 @@ import sklearn.utils
 from keras.applications import VGG16
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.callbacks import TensorBoard
-from keras.layers import Conv2D, MaxPooling2D, Cropping2D
+from keras.layers import Conv2D, Cropping2D
 from keras.layers import Flatten, Dense, Lambda, Dropout, Input
 from keras.models import Sequential, Model
 from sklearn.model_selection import KFold
 
 import data
-
-
-def create_model_lenet(parameters):
-    model = Sequential()
-    model.add(Cropping2D(cropping=((50, 20), (0, 0)), input_shape=(160, 320, 3)))
-    model.add(Lambda(lambda x: x / 255.0 - 0.5))
-    model.add(Conv2D(6, (5, 5), activation='relu'))
-    model.add(MaxPooling2D())
-    model.add(Conv2D(6, (5, 5), activation='relu'))
-    model.add(Flatten())
-    model.add(Dense(120))
-    model.add(Dense(84))
-    model.add(Dense(1))
-    return model
-
-
-def create_model_nvidia(parameters):
-    dropout = parameters.get('dropout', 0)
-    l2_regularizer_lambda = parameters.get('l2_regularizer', 0)
-
-    if l2_regularizer_lambda:
-        l2_regularizer = keras.regularizers.l2(l2_regularizer_lambda)
-    else:
-        l2_regularizer = None
-
-    model = Sequential()
-    model.add(Cropping2D(cropping=((59, 35), (35, 35)), input_shape=(160, 320, 3)))
-    model.add(Lambda(lambda x: x / 255.0 - 0.5))
-    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(Flatten())
-
-    if dropout:
-        model.add(Dropout(rate=0.2))
-    model.add(Dense(100, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=0.2))
-    model.add(Dense(50, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(10, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    if dropout:
-        model.add(Dropout(rate=dropout))
-    model.add(Dense(1, kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
-    return model
 
 
 def create_model_nvidia_4(parameters):
@@ -98,7 +49,7 @@ def create_model_nvidia_4(parameters):
     model.add(Flatten())
 
     if dropout:
-        model.add(Dropout(rate=0.2))
+        model.add(Dropout(rate=0.05))
     model.add(Dense(100, activation='relu', kernel_regularizer=l2_regularizer, kernel_initializer='he_uniform'))
     if dropout:
         model.add(Dropout(rate=0.2))
@@ -131,10 +82,10 @@ def create_model_commaai(parameters):
     model.add(Flatten())
 
     if dropout:
-        model.add(Dropout(rate=0.2)) # 0.2
+        model.add(Dropout(rate=0.2))  # 0.2
     model.add(Dense(512, activation='elu'))
     if dropout:
-        model.add(Dropout(rate=dropout)) # 0.5
+        model.add(Dropout(rate=dropout))  # 0.5
     model.add(Dense(1))
     return model
 
@@ -172,8 +123,6 @@ def create_model_vgg16(parameters):
 
 
 MODELS = {
-    'lenet': create_model_lenet,
-    'nvidia': create_model_nvidia,
     'vgg16': create_model_vgg16,
     'nvidia4': create_model_nvidia_4,
     'commaai': create_model_commaai
@@ -257,6 +206,7 @@ def train_model(model,
 
 def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist, enable_preprocess_yuv,
                           enable_preprocess_hsv):
+    """Helper to load image from row, preprocess and write it back into the images[idx]"""
     image = skimage.io.imread(row[filename_idx])
     if enable_preprocess_hist:
         images[idx] = data.preprocess_hist(image)
@@ -270,7 +220,19 @@ def _process_image_inline(row, images, idx, filename_idx, enable_preprocess_hist
 
 def generate_data(samples, batch_size, angle_adj, random_state=None,
                   enable_preprocess_hist=False, enable_preprocess_yuv=False, enable_preprocess_hsv=False):
+    """Training and validation data generator. It generates images on the fly from the `samples` dataset, which contains
+    only filenames. It outputs batches of `batch_size`.
+    :param samples - input dataset with filesnames
+    :param batch_size - output batch size
+    :param angle_adj - when non zero, will use left and right camera images to generate data point with angle adjusted
+                       to this value
+    :param random_state - can be useful to generate reproducible data sets
+    :param enable_preprocess_hist - enable image preprocessing by applying adaptive histogram adjustment
+    :param enable_preprocess_yuv - preprocess image by converting into YUV colorspace
+    :param enable_preprocess_hsv - preprocess image by converting into HSV colorspace
+    """
     def gen_data(a_batch_samples, filename_idx, an_angle_adj):
+        # This loads and preprocesses one batch
         images = np.empty((len(a_batch_samples),) + data.OUTPUT_SHAPE, np.float32)
         angles = np.empty((len(a_batch_samples),), np.float32)
 
@@ -318,31 +280,8 @@ def generate_data(samples, batch_size, angle_adj, random_state=None,
             yield batch
 
 
-def flip_images(batch_generator, flip_prob=0.5):
-    for batch_images, batch_angles in batch_generator:
-        images = batch_images.copy()
-        angles = batch_angles.copy()
-        indices = random.sample(range(0, len(batch_images)), int(len(batch_images) * flip_prob))
-        for idx in indices:
-            images[idx] = np.fliplr(images[idx])
-            angles[idx] = -angles[idx]
-        yield images, angles
-
-
-def shift_images(batch_generator, shift_prob=0.5):
-    for batch_images, batch_angles in batch_generator:
-        images = batch_images.copy()
-        angles = batch_angles.copy()
-        indices = random.sample(range(0, len(batch_images)), int(len(batch_images) * shift_prob))
-        for idx in indices:
-            shift_x = np.random.randint(-4, 4)
-            images[idx] = skimage.transform.warp(
-                images[idx] / 255., skimage.transform.AffineTransform(translation=(shift_x, 0))) * 255.
-            angles[idx] = angles[idx] + (shift_x) * 0.2
-        yield images, angles
-
-
 def log_model_summary(model):
+    """Helper hack to dump model summary into the log file"""
     keras.utils.layer_utils.print = logging.critical
     keras.utils.layer_utils.print_summary(model)
     keras.utils.layer_utils.print = print
@@ -353,7 +292,7 @@ def parse_arguments():
     parser.add_argument('--verbose', type=int, default=2, help='Keras verbosity')
     parser.add_argument('--workers', type=int, default=1, help='Number of Keras workers')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to learn')
-    parser.add_argument('--learning-rate', type=float, default=0.0001, help='Learning rate')
+    parser.add_argument('--learning-rate', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--early-stopping-patience', type=int, default=None, help='Early stopping patience in epochs')
     parser.add_argument('--name', type=str, default='noname', help='Model name')
     default_out_dir = os.path.join('out', datetime.now().isoformat() + '.' + socket.getfqdn())
@@ -495,6 +434,8 @@ def main():
                                              enable_preprocess_hist=args.preprocess_hist,
                                              enable_preprocess_yuv=args.preprocess_yuv)
 
+        # Depending on the augmentation, number of batches is different to feed all possible augmentations into the
+        # model.
         if args.angleadj is not None:
             # 3 angles * 2 flips
             scale = 6 / batch_size
@@ -520,6 +461,7 @@ def main():
                     workers=args.workers,
                     verbose=args.verbose)
 
+        # Just in case, so we can continue.
         model.save(os.path.join(model_dir, '{}-final.h5'.format(args.name)))
 
 
